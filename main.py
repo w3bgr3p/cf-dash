@@ -1,18 +1,5 @@
 """
 Cloudflare Inventory API
-
-Endpoints:
-    GET /                                             — dashboard HTML
-    GET /colors_and_type.css                          — design system CSS
-    GET /config                                       — has_server_token flag
-    GET /zones?token=                                 — all zones
-    GET /zones/{zone_id}/analytics?token=&days=7      — zone traffic
-    GET /workers?token=                               — all worker scripts
-    GET /workers/{account_id}/{script_name}/analytics?token=&days=7
-    GET /health
-
-Run:
-    python main.py
 """
 
 import asyncio
@@ -32,15 +19,36 @@ from fastapi.responses import FileResponse
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("cf-inventory")
+
+_diag_log = logging.getLogger("cf-inventory.diag")
+_diag_handler = logging.FileHandler("cf-diag.log", encoding="utf-8")
+_diag_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s\n%(message)s\n" + "-" * 80, datefmt="%Y-%m-%d %H:%M:%S"
+    )
+)
+_diag_log.addHandler(_diag_handler)
+_diag_log.setLevel(logging.DEBUG)
+_diag_log.propagate = False
+
+
+def diag(label: str, request_data: dict, response_data: dict, note: str = "") -> None:
+    import json as _json
+
+    msg = (
+        f"[DIAG] {label}"
+        + (f"  note={note}" if note else "")
+        + f"\nREQUEST:\n{_json.dumps(request_data, ensure_ascii=False, indent=2)}"
+        + f"\nRESPONSE:\n{_json.dumps(response_data, ensure_ascii=False, indent=2)}"
+    )
+    _diag_log.debug(msg)
+
 
 logging.getLogger("httpx").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -54,22 +62,15 @@ CF_TOKEN = os.getenv("CF_TOKEN")
 PORT = int(os.getenv("PORT", "19232"))
 
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not CF_TOKEN:
         log.warning("=" * 60)
         log.warning("CF_TOKEN not set — token must be provided per-request")
-        log.warning("To skip the gate, create .env with:")
-        log.warning("  CF_TOKEN=your_cloudflare_api_token")
-        log.warning("  PORT=19232  # optional")
         log.warning("=" * 60)
     else:
         log.info("=" * 60)
         log.info("Cloudflare Inventory API  —  starting up")
-        log.info(f"CF API     : {CF_API}")
         log.info(f"Port       : {PORT}")
         log.info(f"Token      : {CF_TOKEN[:10]}...")
         log.info(f"Dashboard  : http://localhost:{PORT}/")
@@ -78,9 +79,6 @@ async def lifespan(app: FastAPI):
     log.info("Cloudflare Inventory API  —  shut down")
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 app = FastAPI(
     title="Cloudflare Inventory API",
     version="1.0.0",
@@ -88,18 +86,11 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
-
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
 
-# ---------------------------------------------------------------------------
-# Middleware
-# ---------------------------------------------------------------------------
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.perf_counter()
@@ -115,13 +106,9 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def resolve_token(token: str | None) -> str:
     actual = token or CF_TOKEN
     if not actual:
-        log.error("no token provided and CF_TOKEN not set in .env")
         raise HTTPException(
             status_code=400,
             detail="Cloudflare token required. Provide via ?token= or set CF_TOKEN in .env",
@@ -130,10 +117,7 @@ def resolve_token(token: str | None) -> str:
 
 
 def make_headers(token: str) -> dict:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 def date_range(days: int) -> tuple[str, str]:
@@ -151,12 +135,10 @@ async def cf_get(
     r = await client.get(url, headers=headers)
     log.debug(f"[cf_get] {tag}  HTTP {r.status_code}")
     if r.status_code == 401:
-        log.error(f"[cf_get] 401 — {tag}")
         raise HTTPException(
             status_code=401, detail="Invalid Cloudflare token or missing permission"
         )
     if r.status_code == 403:
-        log.error(f"[cf_get] 403 — {tag}")
         raise HTTPException(
             status_code=403, detail=f"Token lacks permission for: {tag}"
         )
@@ -164,7 +146,7 @@ async def cf_get(
     data = r.json()
     if not data.get("success"):
         errors = data.get("errors", [])
-        log.error(f"[cf_get] API error — {tag}: {errors}")
+        diag(tag, {"url": url}, data, note="api-not-success")
         raise HTTPException(status_code=502, detail=f"Cloudflare API error: {errors}")
     return data
 
@@ -175,34 +157,25 @@ async def cf_paginate(
     tag = label or url
     results = []
     page = 1
-    log.debug(f"[paginate] START  {tag}")
     while True:
-        log.debug(f"[paginate] {tag}  page={page}")
         r = await client.get(
             url, headers=headers, params={"page": page, "per_page": 50}
         )
-        log.debug(f"[paginate] {tag}  page={page}  HTTP {r.status_code}")
         if r.status_code in (401, 403):
-            log.error(f"[paginate] HTTP {r.status_code} — {tag}")
             raise HTTPException(
                 status_code=r.status_code, detail=f"Auth error on {tag}"
             )
         r.raise_for_status()
         data = r.json()
         if not data.get("success"):
-            log.error(f"[paginate] API error — {data.get('errors')}")
             break
         items = data.get("result", [])
         results.extend(items)
-        log.debug(
-            f"[paginate] {tag}  page={page}  got={len(items)}  total={len(results)}"
-        )
         info = data.get("result_info", {})
         total_pages = info.get("total_pages", 1)
         if page >= total_pages or not items:
             break
         page += 1
-    log.debug(f"[paginate] DONE  {tag}  total={len(results)}")
     return results
 
 
@@ -214,29 +187,36 @@ async def cf_graphql(
     label: str = "",
 ) -> dict:
     tag = label or "graphql"
-    log.debug(f"[graphql] {tag}  vars={variables}")
     r = await client.post(
         CF_GRAPHQL, headers=headers, json={"query": query, "variables": variables}
     )
-    log.debug(f"[graphql] {tag}  HTTP {r.status_code}")
     if r.status_code == 401:
+        diag(
+            tag,
+            {"query": query, "variables": variables},
+            {"status": r.status_code, "body": r.text},
+            note="401",
+        )
         raise HTTPException(
             status_code=401, detail="Invalid token for GraphQL analytics"
         )
     r.raise_for_status()
     data = r.json()
     if "errors" in data and data["errors"]:
-        log.error(f"[graphql] {tag}  errors: {data['errors']}")
+        diag(tag, {"query": query, "variables": variables}, data, note="graphql-errors")
         raise HTTPException(status_code=502, detail=f"GraphQL error: {data['errors']}")
-    log.debug(f"[graphql] {tag}  OK")
+    viewer = data.get("data", {}).get("viewer", {})
+    zones = viewer.get("zones", [])
+    accounts = viewer.get("accounts", [])
+    if (zones and not zones[0].get("httpRequests1dGroups")) or (
+        accounts and not accounts[0].get("workersInvocationsAdaptive")
+    ):
+        diag(tag, {"query": query, "variables": variables}, data, note="empty-result")
     return data.get("data", {})
 
 
-# ---------------------------------------------------------------------------
-# GraphQL queries
-# ---------------------------------------------------------------------------
 ZONE_ANALYTICS_QUERY = """
-query ZoneAnalytics($zoneTag: string!, $since: Date!, $until: Date!) {
+query ZoneAnalytics($zoneTag: String!, $since: Date!, $until: Date!) {
   viewer {
     zones(filter: { zoneTag: $zoneTag }) {
       httpRequests1dGroups(
@@ -245,14 +225,7 @@ query ZoneAnalytics($zoneTag: string!, $since: Date!, $until: Date!) {
         orderBy: [date_ASC]
       ) {
         dimensions { date }
-        sum {
-          requests
-          bytes
-          cachedRequests
-          cachedBytes
-          threats
-          pageViews
-        }
+        sum { requests bytes cachedRequests cachedBytes threats pageViews }
         uniq { uniques }
       }
     }
@@ -261,16 +234,12 @@ query ZoneAnalytics($zoneTag: string!, $since: Date!, $until: Date!) {
 """
 
 WORKER_ANALYTICS_QUERY = """
-query WorkerAnalytics($accountTag: string!, $scriptName: string!, $since: DateTime!, $until: DateTime!) {
+query WorkerAnalytics($accountTag: String!, $scriptName: String!, $since: DateTime!, $until: DateTime!) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
       workersInvocationsAdaptive(
         limit: 10000
-        filter: {
-          scriptName: $scriptName
-          datetime_geq: $since
-          datetime_leq: $until
-        }
+        filter: { scriptName: $scriptName datetime_geq: $since datetime_leq: $until }
         orderBy: [datetime_ASC]
       ) {
         sum { requests errors subrequests }
@@ -283,52 +252,31 @@ query WorkerAnalytics($accountTag: string!, $scriptName: string!, $since: DateTi
 """
 
 
-# ---------------------------------------------------------------------------
-# Static files
-# ---------------------------------------------------------------------------
 @app.get("/")
 async def dashboard():
-    log.debug("[/] serving dashboard")
     return FileResponse("cf-dash.html")
 
 
 @app.get("/colors_and_type.css")
 async def css():
-    log.debug("[/colors_and_type.css] serving CSS")
     return FileResponse("colors_and_type.css", media_type="text/css")
 
 
-# ---------------------------------------------------------------------------
-# Config — token gate handshake
-# ---------------------------------------------------------------------------
 @app.get("/config")
 async def config():
-    log.debug("[/config] checking token availability")
     return {
         "has_server_token": CF_TOKEN is not None,
         "token_required": CF_TOKEN is None,
     }
 
 
-# ---------------------------------------------------------------------------
-# Zones
-# ---------------------------------------------------------------------------
 @app.get("/zones")
-async def get_zones(
-    token: str = Query(
-        None, description="Cloudflare API token (optional if set in .env)"
-    ),
-):
-    """All zones (domains): status, plan, nameservers, account."""
+async def get_zones(token: str = Query(None)):
     t0 = time.perf_counter()
     actual = resolve_token(token)
-    log.info("[/zones] START")
     headers = make_headers(actual)
-
     async with httpx.AsyncClient(timeout=30) as client:
         zones = await cf_paginate(client, f"{CF_API}/zones", headers, label="zones")
-        log.info(f"[/zones] found {len(zones)} zones")
-
         result = [
             {
                 "id": z.get("id"),
@@ -355,33 +303,20 @@ async def get_zones(
             }
             for z in zones
         ]
-
-        elapsed = (time.perf_counter() - t0) * 1000
-        log.info(f"[/zones] DONE  {len(result)} zones  {elapsed:.0f}ms")
+        log.info(
+            f"[/zones] DONE  {len(result)} zones  {(time.perf_counter() - t0) * 1000:.0f}ms"
+        )
         return {"total": len(result), "zones": result}
 
 
-# ---------------------------------------------------------------------------
-# Zone analytics
-# ---------------------------------------------------------------------------
 @app.get("/zones/{zone_id}/analytics")
 async def get_zone_analytics(
-    zone_id: str,
-    token: str = Query(
-        None, description="Cloudflare API token (optional if set in .env)"
-    ),
-    days: int = Query(7, ge=1, le=365, description="Period in days (1–365)"),
+    zone_id: str, token: str = Query(None), days: int = Query(7, ge=1, le=365)
 ):
-    """Traffic analytics for a zone: requests, bytes, cached, threats, uniques per day."""
     actual = resolve_token(token)
-    log.info(f"[/zones/analytics] zone={zone_id}  days={days}")
     headers = make_headers(actual)
-
     since, until = date_range(days)
-    since_date = since[:10]
-    until_date = until[:10]
-    log.debug(f"[/zones/analytics] period  {since_date} → {until_date}")
-
+    since_date, until_date = since[:10], until[:10]
     async with httpx.AsyncClient(timeout=30) as client:
         data = await cf_graphql(
             client,
@@ -390,10 +325,8 @@ async def get_zone_analytics(
             variables={"zoneTag": zone_id, "since": since_date, "until": until_date},
             label=f"zone-analytics/{zone_id}",
         )
-
     zones_data = data.get("viewer", {}).get("zones", [])
     if not zones_data:
-        log.warning(f"[/zones/analytics] no data for zone {zone_id}")
         return {
             "zone_id": zone_id,
             "days": days,
@@ -401,10 +334,7 @@ async def get_zone_analytics(
             "daily": [],
             "totals": {},
         }
-
     groups = zones_data[0].get("httpRequests1dGroups", [])
-    log.info(f"[/zones/analytics] {len(groups)} daily buckets")
-
     daily = []
     totals = {
         "requests": 0,
@@ -415,10 +345,8 @@ async def get_zone_analytics(
         "page_views": 0,
         "uniques": 0,
     }
-
     for g in groups:
-        s = g.get("sum", {})
-        u = g.get("uniq", {})
+        s, u = g.get("sum", {}), g.get("uniq", {})
         row = {
             "date": g.get("dimensions", {}).get("date", ""),
             "requests": s.get("requests", 0),
@@ -432,8 +360,6 @@ async def get_zone_analytics(
         daily.append(row)
         for k in totals:
             totals[k] += row.get(k, 0)
-
-    log.info(f"[/zones/analytics] totals: {totals}")
     return {
         "zone_id": zone_id,
         "days": days,
@@ -443,38 +369,19 @@ async def get_zone_analytics(
     }
 
 
-# ---------------------------------------------------------------------------
-# Workers
-# ---------------------------------------------------------------------------
 @app.get("/workers")
-async def get_workers(
-    token: str = Query(
-        None, description="Cloudflare API token (optional if set in .env)"
-    ),
-):
-    """All worker scripts across all accounts: routes, crons, active flag."""
+async def get_workers(token: str = Query(None)):
     t0 = time.perf_counter()
     actual = resolve_token(token)
-    log.info("[/workers] START")
     headers = make_headers(actual)
-
     async with httpx.AsyncClient(timeout=60) as client:
-        log.info("[/workers] fetching accounts")
         accounts_data = await cf_get(
             client, f"{CF_API}/accounts", headers, label="accounts"
         )
         accounts = accounts_data.get("result", [])
-        log.info(
-            f"[/workers] {len(accounts)} accounts: {[a['name'] for a in accounts]}"
-        )
-
         all_workers = []
-
         for account in accounts:
-            acct_id = account["id"]
-            acct_name = account["name"]
-            log.info(f"[/workers] account={acct_name} ({acct_id})")
-
+            acct_id, acct_name = account["id"], account["name"]
             try:
                 scripts_data = await cf_get(
                     client,
@@ -483,20 +390,16 @@ async def get_workers(
                     label=f"scripts/{acct_name}",
                 )
                 scripts = scripts_data.get("result", [])
-                log.info(f"[/workers] account={acct_name}  scripts={len(scripts)}")
             except HTTPException as e:
                 log.warning(f"[/workers] skipping {acct_name}: {e.detail}")
                 continue
-
             for script in scripts:
                 name = (
                     script.get("id")
                     or script.get("script_name")
                     or script.get("name", "")
                 )
-                log.debug(f"[/workers] script={name}")
-
-                routes = []
+                routes, crons = [], []
                 try:
                     rd = await cf_get(
                         client,
@@ -505,11 +408,8 @@ async def get_workers(
                         label=f"routes/{name}",
                     )
                     routes = rd.get("result", [])
-                    log.debug(f"[/workers] {name}  routes={len(routes)}")
-                except Exception as e:
-                    log.warning(f"[/workers] routes failed for {name}: {e}")
-
-                crons = []
+                except Exception:
+                    pass
                 try:
                     cd = await cf_get(
                         client,
@@ -518,10 +418,8 @@ async def get_workers(
                         label=f"schedules/{name}",
                     )
                     crons = cd.get("result", {}).get("schedules", [])
-                    log.debug(f"[/workers] {name}  crons={len(crons)}")
-                except Exception as e:
-                    log.warning(f"[/workers] schedules failed for {name}: {e}")
-
+                except Exception:
+                    pass
                 all_workers.append(
                     {
                         "account_id": acct_id,
@@ -543,44 +441,29 @@ async def get_workers(
                         "active": bool(routes or crons),
                     }
                 )
-
         all_workers.sort(key=lambda w: w["modified_on"] or "", reverse=True)
         active = sum(1 for w in all_workers if w["active"])
-        inactive = len(all_workers) - active
-        elapsed = (time.perf_counter() - t0) * 1000
         log.info(
-            f"[/workers] DONE  total={len(all_workers)}  active={active}  inactive={inactive}  {elapsed:.0f}ms"
+            f"[/workers] DONE  total={len(all_workers)}  active={active}  {(time.perf_counter() - t0) * 1000:.0f}ms"
         )
-
         return {
             "total": len(all_workers),
             "active": active,
-            "inactive": inactive,
+            "inactive": len(all_workers) - active,
             "workers": all_workers,
         }
 
 
-# ---------------------------------------------------------------------------
-# Worker analytics
-# ---------------------------------------------------------------------------
 @app.get("/workers/{account_id}/{script_name}/analytics")
 async def get_worker_analytics(
     account_id: str,
     script_name: str,
-    token: str = Query(
-        None, description="Cloudflare API token (optional if set in .env)"
-    ),
-    days: int = Query(7, ge=1, le=90, description="Period in days (1–90)"),
+    token: str = Query(None),
+    days: int = Query(7, ge=1, le=90),
 ):
-    """Worker invocations, errors, CPU time per bucket."""
     actual = resolve_token(token)
-    log.info(
-        f"[/workers/analytics] account={account_id}  script={script_name}  days={days}"
-    )
     headers = make_headers(actual)
     since, until = date_range(days)
-    log.debug(f"[/workers/analytics] period  {since} → {until}")
-
     async with httpx.AsyncClient(timeout=30) as client:
         data = await cf_graphql(
             client,
@@ -594,10 +477,8 @@ async def get_worker_analytics(
             },
             label=f"worker-analytics/{script_name}",
         )
-
     accounts_data = data.get("viewer", {}).get("accounts", [])
     if not accounts_data:
-        log.warning(f"[/workers/analytics] no data for {script_name}")
         return {
             "account_id": account_id,
             "script_name": script_name,
@@ -606,17 +487,15 @@ async def get_worker_analytics(
             "buckets": [],
             "totals": {},
         }
-
     invocations = accounts_data[0].get("workersInvocationsAdaptive", [])
-    log.info(f"[/workers/analytics] {len(invocations)} buckets")
-
     buckets = []
     totals = {"requests": 0, "errors": 0, "subrequests": 0}
-
     for inv in invocations:
-        s = inv.get("sum", {})
-        q = inv.get("quantiles", {})
-        d = inv.get("dimensions", {})
+        s, q, d = (
+            inv.get("sum", {}),
+            inv.get("quantiles", {}),
+            inv.get("dimensions", {}),
+        )
         row = {
             "datetime": d.get("datetime"),
             "status": d.get("status"),
@@ -630,14 +509,11 @@ async def get_worker_analytics(
         totals["requests"] += row["requests"]
         totals["errors"] += row["errors"]
         totals["subrequests"] += row["subrequests"]
-
     totals["error_rate_pct"] = (
         round(totals["errors"] / totals["requests"] * 100, 2)
         if totals["requests"]
         else 0.0
     )
-    log.info(f"[/workers/analytics] totals: {totals}")
-
     return {
         "account_id": account_id,
         "script_name": script_name,
@@ -648,38 +524,25 @@ async def get_worker_analytics(
     }
 
 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Create API Token via Global API Key
-# ---------------------------------------------------------------------------
 @app.post("/create-token")
 async def create_token(
-    email: str = Query(..., description="Cloudflare account email"),
-    global_key: str = Query(..., description="Global API Key"),
-    name: str = Query("cf-inventory-token", description="Name for the new token"),
+    email: str = Query(...),
+    global_key: str = Query(...),
+    name: str = Query("cf-inventory-token"),
 ):
     log.info(f"[/create-token] START  email={email}  name={name}")
-
     headers = {
         "X-Auth-Email": email,
         "X-Auth-Key": global_key,
         "Content-Type": "application/json",
     }
-
     async with httpx.AsyncClient(timeout=30) as client:
-        # 1. Verify credentials
         r = await client.get(f"{CF_API}/user", headers=headers)
         if r.status_code == 403:
             raise HTTPException(
                 status_code=403, detail="Invalid email or Global API Key"
             )
         r.raise_for_status()
-        user = r.json().get("result", {})
-        log.info(f"[/create-token] authenticated as {user.get('email')}")
-
-        # 2. Get account id
         ra = await client.get(
             f"{CF_API}/accounts", headers=headers, params={"per_page": 1}
         )
@@ -687,18 +550,13 @@ async def create_token(
         accounts = ra.json().get("result", [])
         if not accounts:
             raise HTTPException(status_code=404, detail="No Cloudflare accounts found")
-        account_id = accounts[0]["id"]
-        account_name = accounts[0]["name"]
-        log.info(f"[/create-token] account  {account_name}  ({account_id})")
-
-        # 3. Fetch actual permission group IDs from CF
+        account_id, account_name = accounts[0]["id"], accounts[0]["name"]
         rp = await client.get(
             f"{CF_API}/user/tokens/permission_groups", headers=headers
         )
         rp.raise_for_status()
         all_groups = rp.json().get("result", [])
         log.info(f"[/create-token] fetched {len(all_groups)} permission groups")
-
         groups = {g["name"]: g["id"] for g in all_groups}
         log.debug(f"[/create-token] available groups: {list(groups.keys())}")
 
@@ -711,8 +569,6 @@ async def create_token(
                 )
             return {"id": gid, "name": name}
 
-        # 4. Build policies using resolved IDs
-        # 4. Build policies using resolved IDs
         payload = {
             "name": name,
             "policies": [
@@ -721,7 +577,7 @@ async def create_token(
                     "resources": {"com.cloudflare.api.account.zone.*": "*"},
                     "permission_groups": [
                         get_group("Zone Read"),
-                        get_group("Analytics Read"),  # ← было "Zone Analytics Read"
+                        get_group("Analytics Read"),
                     ],
                 },
                 {
@@ -729,43 +585,35 @@ async def create_token(
                     "resources": {f"com.cloudflare.api.account.{account_id}": "*"},
                     "permission_groups": [
                         get_group("Account Settings Read"),
+                        get_group("Account Analytics Read"),
+                        get_group("Analytics Read"),
                         get_group("Workers Scripts Read"),
                         get_group("Workers AI Read"),
                     ],
                 },
             ],
         }
-
-        # 5. Create the token
         rt = await client.post(f"{CF_API}/user/tokens", headers=headers, json=payload)
         data = rt.json()
         if not data.get("success"):
-            errors = data.get("errors", [])
-            log.error(f"[/create-token] token creation failed: {errors}")
             raise HTTPException(
-                status_code=502, detail=f"Token creation failed: {errors}"
+                status_code=502,
+                detail=f"Token creation failed: {data.get('errors', [])}",
             )
-
         result = data.get("result", {})
-        token_value = result.get("value")
-        token_id = result.get("id")
-        log.info(f"[/create-token] DONE  token_id={token_id}  name={name}")
-
         return {
             "success": True,
-            "token": token_value,
-            "token_id": token_id,
+            "token": result.get("value"),
+            "token_id": result.get("id"),
             "token_name": name,
             "account_id": account_id,
             "account_name": account_name,
-            "hint": f"Add to .env:  CF_TOKEN={token_value}",
         }
 
 
 @app.get("/debug/permission-groups")
 async def debug_permission_groups(
-    email: str = Query(...),
-    global_key: str = Query(...),
+    email: str = Query(...), global_key: str = Query(...)
 ):
     headers = {
         "X-Auth-Email": email,
@@ -788,13 +636,9 @@ async def debug_permission_groups(
 
 
 # ---------------------------------------------------------------------------
-# AI — модели и стоимость запроса
+# AI
 # ---------------------------------------------------------------------------
-
-# Neurons per M tokens/units — из официальной документации CF
-# Обновлено: май 2026
 AI_PRICING = {
-    # LLM
     "@cf/meta/llama-3.1-8b-instruct": {
         "input": 25608,
         "output": 75147,
@@ -861,7 +705,6 @@ AI_PRICING = {
         "unit": "tokens",
         "category": "LLM",
     },
-    # Embeddings
     "@cf/baai/bge-m3": {
         "input": 1300,
         "output": None,
@@ -886,7 +729,6 @@ AI_PRICING = {
         "unit": "tokens",
         "category": "Embeddings",
     },
-    # STT
     "@cf/deepgram/nova-3": {
         "input": 300,
         "output": None,
@@ -899,7 +741,6 @@ AI_PRICING = {
         "unit": "seconds",
         "category": "STT",
     },
-    # Image gen
     "@cf/black-forest-labs/flux-1-schnell": {
         "input": 5700,
         "output": None,
@@ -927,85 +768,50 @@ AI_PRICING = {
 }
 
 NEURONS_PER_DAY_FREE = 10_000
-NEURONS_PRICE_USD = 0.011 / 1000  # per neuron
+NEURONS_PRICE_USD = 0.011 / 1000
 
 
 def estimate_cost(model_id: str, input_units: int, output_units: int = 0) -> dict:
-    """Calculate neurons and USD cost for a request."""
     pricing = AI_PRICING.get(model_id)
     if not pricing:
         return {"neurons": None, "usd": None, "note": "pricing unknown for this model"}
-
-    per_m_in = pricing["input"]
-    per_m_out = pricing.get("output") or 0
-    unit = pricing["unit"]
-
-    neurons_in = round(input_units * per_m_in / 1_000_000)
-    neurons_out = round(output_units * per_m_out / 1_000_000)
+    neurons_in = round(input_units * pricing["input"] / 1_000_000)
+    neurons_out = round(output_units * (pricing.get("output") or 0) / 1_000_000)
     total_neurons = neurons_in + neurons_out
     usd = round(total_neurons * NEURONS_PRICE_USD, 6)
-
-    free_remaining_after = max(0, NEURONS_PER_DAY_FREE - total_neurons)
-
     return {
         "neurons_input": neurons_in,
         "neurons_output": neurons_out,
         "neurons_total": total_neurons,
         "usd": usd,
-        "unit": unit,
+        "unit": pricing["unit"],
         "free_daily_limit": NEURONS_PER_DAY_FREE,
         "pct_of_free_daily": round(total_neurons / NEURONS_PER_DAY_FREE * 100, 2),
     }
 
 
 @app.get("/ai/models")
-async def get_ai_models(
-    token: str = Query(
-        None, description="Cloudflare API token (optional if set in .env)"
-    ),
-    account_id: str = Query(
-        None, description="Cloudflare account ID (fetched automatically if not set)"
-    ),
-):
-    """
-    List Workers AI models with pricing data.
-    Fetches live catalog from CF API (accounts/{id}/ai/models/search),
-    enriches with local pricing where available.
-    """
+async def get_ai_models(token: str = Query(None), account_id: str = Query(None)):
     actual = resolve_token(token)
-    log.info("[/ai/models] START")
     headers = make_headers(actual)
-
     async with httpx.AsyncClient(timeout=30) as client:
-        # Resolve account_id if not provided
         if not account_id:
-            log.info("[/ai/models] fetching account_id")
             ra = await cf_get(client, f"{CF_API}/accounts", headers, label="accounts")
             accounts = ra.get("result", [])
             if not accounts:
                 raise HTTPException(status_code=404, detail="No accounts found")
             account_id = accounts[0]["id"]
-            log.info(f"[/ai/models] account_id={account_id}")
-
-        # Fetch live model catalog from CF
-        log.info(f"[/ai/models] fetching models from CF  account={account_id}")
         models = await cf_paginate(
             client,
             f"{CF_API}/accounts/{account_id}/ai/models/search",
             headers,
             label="ai/models/search",
         )
-        log.info(f"[/ai/models] CF returned {len(models)} models")
-
-    # If CF returned nothing (token lacks Workers AI Read) — fall back to AI_PRICING
     if not models:
-        log.warning(
-            "[/ai/models] CF returned empty list — falling back to local AI_PRICING catalog"
-        )
         result = [
             {
-                "id": model_id,
-                "name": model_id,
+                "id": mid,
+                "name": mid,
                 "description": None,
                 "task": p["category"],
                 "tags": [],
@@ -1017,39 +823,32 @@ async def get_ai_models(
                     "output_neurons_per_m": p.get("output"),
                 },
             }
-            for model_id, p in AI_PRICING.items()
+            for mid, p in AI_PRICING.items()
         ]
     else:
         result = []
         for m in models:
-            model_id = m.get("name", "")
-            pricing = AI_PRICING.get(model_id)
+            mid = m.get("name", "")
+            p = AI_PRICING.get(mid)
             result.append(
                 {
-                    "id": model_id,
-                    "name": model_id,
+                    "id": mid,
+                    "name": mid,
                     "description": m.get("description"),
                     "task": m.get("task", {}).get("name") if m.get("task") else None,
                     "tags": m.get("tags", []),
-                    "source": m.get("source", "hosted"),  # hosted | proxied
-                    "category": pricing["category"] if pricing else None,
+                    "source": m.get("source", "hosted"),
+                    "category": p["category"] if p else None,
                     "pricing": {
-                        "unit": pricing["unit"] if pricing else None,
-                        "input_neurons_per_m": pricing["input"] if pricing else None,
-                        "output_neurons_per_m": pricing.get("output")
-                        if pricing
-                        else None,
+                        "unit": p["unit"],
+                        "input_neurons_per_m": p["input"],
+                        "output_neurons_per_m": p.get("output"),
                     }
-                    if pricing
+                    if p
                     else None,
                 }
             )
-
     categories = sorted({r["category"] for r in result if r["category"]})
-    with_pricing = sum(1 for r in result if r["pricing"])
-    log.info(
-        f"[/ai/models] DONE  total={len(result)}  with_pricing={with_pricing}  categories={categories}"
-    )
     return {
         "account_id": account_id,
         "total": len(result),
@@ -1065,6 +864,7 @@ async def run_ai_model(
     prompt: str = Query(...),
     system: str = Query(None),
     max_tokens: int = Query(256, ge=1, le=4096),
+    messages: str = Query(None),  # JSON история чата для LLM
 ):
     actual = resolve_token(token)
     log.info(
@@ -1079,22 +879,28 @@ async def run_ai_model(
             raise HTTPException(status_code=404, detail="No accounts found")
         account_id = accounts[0]["id"]
 
-        # Определяем категорию модели
         pricing = AI_PRICING.get(model, {})
         category = pricing.get("category", "LLM")
 
-        # Payload зависит от типа модели
         if category == "ImageGen":
             payload = {"prompt": prompt}
         elif category == "Embeddings":
             payload = {"text": prompt}
         else:
-            # LLM — messages format
-            messages = []
-            if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
-            payload = {"messages": messages, "max_tokens": max_tokens}
+            # LLM — используем переданную историю или строим из одного сообщения
+            import json as _json
+
+            if messages:
+                try:
+                    msgs = _json.loads(messages)
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Invalid messages JSON")
+            else:
+                msgs = []
+                if system:
+                    msgs.append({"role": "system", "content": system})
+                msgs.append({"role": "user", "content": prompt})
+            payload = {"messages": msgs, "max_tokens": max_tokens}
 
         log.info(
             f"[/ai/run] category={category}  POST accounts/{account_id}/ai/run/{model}"
@@ -1107,10 +913,8 @@ async def run_ai_model(
             timeout=60,
         )
         elapsed_ms = round((time.perf_counter() - t0) * 1000)
-        log.debug(f"[/ai/run] HTTP {r.status_code}  {elapsed_ms}ms")
 
         if r.status_code == 400:
-            log.error(f"[/ai/run] 400: {r.text}")
             raise HTTPException(
                 status_code=400, detail=f"Model rejected request: {r.text}"
             )
@@ -1120,44 +924,32 @@ async def run_ai_model(
             )
         r.raise_for_status()
 
-        # Image models возвращают бинарный PNG, не JSON
         if category == "ImageGen":
             import base64
 
             content_type = r.headers.get("content-type", "")
-
-            # RAW PNG/JPEG
             if "image/" in content_type:
                 image_b64 = base64.b64encode(r.content).decode()
                 image_bytes = len(r.content)
-
-            # JSON response
             else:
                 data = r.json()
-
                 if not data.get("success"):
-                    errors = data.get("errors", [])
                     raise HTTPException(
-                        status_code=502, detail=f"AI run failed: {errors}"
+                        status_code=502,
+                        detail=f"AI run failed: {data.get('errors', [])}",
                     )
-
                 result = data.get("result", {})
-
                 image_b64 = (
                     result.get("image")
                     or result.get("b64_json")
                     or result.get("output")
                 )
-
                 if not image_b64:
                     raise HTTPException(
                         status_code=502, detail=f"Image not found in response: {result}"
                     )
-
                 image_bytes = len(base64.b64decode(image_b64))
-
             cost = estimate_cost(model, 1, 0)
-
             return {
                 "model": model,
                 "category": category,
@@ -1166,16 +958,15 @@ async def run_ai_model(
                 "latency_ms": elapsed_ms,
                 "cost": cost,
             }
-            # LLM / Embeddings response
+
         else:
+            # LLM / Embeddings
             data = r.json()
-
             if not data.get("success"):
-                errors = data.get("errors", [])
-                raise HTTPException(status_code=502, detail=f"AI run failed: {errors}")
-
+                raise HTTPException(
+                    status_code=502, detail=f"AI run failed: {data.get('errors', [])}"
+                )
             result = data.get("result", {})
-
             if category == "Embeddings":
                 response_text = None
                 input_tokens = len(prompt.split())
@@ -1188,9 +979,7 @@ async def run_ai_model(
                 output_tokens = result.get("usage", {}).get(
                     "completion_tokens", len((response_text or "").split())
                 )
-
             cost = estimate_cost(model, input_tokens, output_tokens)
-
             return {
                 "model": model,
                 "category": category,
@@ -1207,18 +996,8 @@ async def run_ai_model(
 
 @app.get("/health")
 async def health():
-    log.debug("[/health] ping")
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host=HOST,
-        port=PORT,
-        reload=False,
-        log_level="warning",
-    )
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=False, log_level="warning")

@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <title>cf inventory</title>
+        <title>cf dash</title>
         <link rel="stylesheet" href="colors_and_type.css" />
         <style>
             * {
@@ -690,8 +690,8 @@
         <div class="topbar">
             <div class="brand">
                 <span class="brand-mark">cf</span>
-                <span class="brand-name">inventory</span>
-                <span class="brand-sub">cloudflare</span>
+                <span class="brand-name">dash</span>
+                <span class="brand-sub">cloudfriendly dashboard</span>
             </div>
             <div
                 id="topbar-meta"
@@ -1399,7 +1399,14 @@
                                                 font-size: var(--fs-11);
                                             "
                                         />
-                                        <span style="font-size:var(--fs-9);color:var(--muted);margin-left:4px">ctrl+enter to send</span>
+                                        <span
+                                            style="
+                                                font-size: var(--fs-9);
+                                                color: var(--muted);
+                                                margin-left: 4px;
+                                            "
+                                            >ctrl+enter</span
+                                        >
                                         <button
                                             class="btn btn-primary"
                                             id="ai-run-btn"
@@ -2337,27 +2344,31 @@
     `;
             }
 
-            // Хранит последний blob URL изображения для скачивания/копирования
             let _lastImgBlobUrl = null;
 
-            // История чата для LLM: [{role, content}]
+            // ── CHAT HISTORY ──
             let _chatHistory = [];
 
             function _chatEmpty() {
                 const area = document.getElementById("ai-result-area");
-                area.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">run a prompt to see results here</div>';
+                area.innerHTML =
+                    '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">run a prompt to see results here</div>';
             }
 
             function _renderChat() {
                 const area = document.getElementById("ai-result-area");
                 area.innerHTML = "";
-                if (_chatHistory.length === 0) { _chatEmpty(); return; }
+                if (_chatHistory.length === 0) {
+                    _chatEmpty();
+                    return;
+                }
                 for (const msg of _chatHistory) {
                     const isUser = msg.role === "user";
                     const wrap = document.createElement("div");
                     wrap.style.cssText = `display:flex;flex-direction:column;gap:2px;align-items:${isUser ? "flex-end" : "flex-start"};margin-bottom:6px`;
                     const lbl = document.createElement("div");
-                    lbl.style.cssText = "font-size:var(--fs-9);color:var(--text2);font-family:var(--font-mono);margin-bottom:2px";
+                    lbl.style.cssText =
+                        "font-size:var(--fs-9);color:var(--text2);font-family:var(--font-mono);margin-bottom:2px";
                     lbl.textContent = isUser ? "you" : "assistant";
                     const bubble = document.createElement("div");
                     bubble.style.cssText = `font-family:var(--font-mono);font-size:var(--fs-12);white-space:pre-wrap;line-height:1.6;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);max-width:90%;${
@@ -2377,10 +2388,15 @@
                 _chatEmpty();
             }
 
-            // Ctrl+Enter в поле промпта отправляет
-            document.getElementById("ai-prompt").addEventListener("keydown", function(e) {
-                if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); runAiModel(); }
-            });
+            // Ctrl+Enter отправляет
+            document
+                .getElementById("ai-prompt")
+                .addEventListener("keydown", function (e) {
+                    if (e.key === "Enter" && e.ctrlKey) {
+                        e.preventDefault();
+                        runAiModel();
+                    }
+                });
 
             async function runAiModel() {
                 const modelId =
@@ -2410,30 +2426,28 @@
 
                 const area = document.getElementById("ai-result-area");
 
-                // Определяем категорию по локальному aiPricing
                 const pricingInfo = aiPricing[modelId];
                 const category = pricingInfo?.category || "LLM";
                 const isLLM = category === "LLM";
 
-                // Для LLM — добавляем user в историю, передаём полную историю
                 let messagesForRequest = null;
                 if (isLLM) {
                     _chatHistory.push({ role: "user", content: prompt });
                     _renderChat();
-                    // typing indicator
                     const typing = document.createElement("div");
                     typing.id = "chat-typing";
-                    typing.style.cssText = "color:var(--muted);font-size:var(--fs-11);padding:4px 12px;font-family:var(--font-mono)";
+                    typing.style.cssText =
+                        "color:var(--muted);font-size:var(--fs-11);padding:4px 12px;font-family:var(--font-mono)";
                     typing.textContent = "thinking…";
                     area.appendChild(typing);
                     area.scrollTop = area.scrollHeight;
-                    // строим messages: system + history
                     const full = system
                         ? [{ role: "system", content: system }, ..._chatHistory]
                         : [..._chatHistory];
                     messagesForRequest = JSON.stringify(full);
                 } else {
-                    area.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">running…</div>';
+                    area.innerHTML =
+                        '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">running…</div>';
                 }
 
                 document.getElementById("ai-prompt").value = "";
@@ -2445,7 +2459,8 @@
                 });
                 if (system) params.set("system", system);
                 if (currentToken) params.set("token", currentToken);
-                if (messagesForRequest) params.set("messages", messagesForRequest);
+                if (messagesForRequest)
+                    params.set("messages", messagesForRequest);
 
                 try {
                     const data = await fetch(`${API_BASE}/ai/run?${params}`, {
@@ -2491,7 +2506,6 @@
                         for (let i = 0; i < byteChars.length; i++)
                             byteArr[i] = byteChars.charCodeAt(i);
                         const blob = new Blob([byteArr], { type: "image/png" });
-
                         if (_lastImgBlobUrl)
                             URL.revokeObjectURL(_lastImgBlobUrl);
                         _lastImgBlobUrl = URL.createObjectURL(blob);
@@ -2534,20 +2548,19 @@
                         modelLabel.textContent = data.model;
 
                         actions.append(dlBtn, cpBtn, modelLabel);
-
                         const imgBlock = document.createElement("div");
                         imgBlock.append(label, imgWrap, actions);
-
                         area.innerHTML = "";
                         area.append(imgBlock, costWrap);
                     } else if (isLLM) {
-                        // Добавляем assistant в историю и ре-рендерим чат
                         document.getElementById("chat-typing")?.remove();
-                        _chatHistory.push({ role: "assistant", content: data.response || "" });
+                        _chatHistory.push({
+                            role: "assistant",
+                            content: data.response || "",
+                        });
                         _renderChat();
                         area.appendChild(costWrap);
                     } else {
-                        // Embeddings и прочее
                         const respBlock = document.createElement("div");
                         respBlock.innerHTML = `
           <div class="detail-section-label">response</div>
@@ -2560,11 +2573,11 @@
                 } catch (e) {
                     document.getElementById("chat-typing")?.remove();
                     if (isLLM) {
-                        // убираем последнее user сообщение из истории при ошибке
                         _chatHistory.pop();
                         _renderChat();
                         const errDiv = document.createElement("div");
-                        errDiv.style.cssText = "color:var(--red);font-size:var(--fs-11);padding:12px";
+                        errDiv.style.cssText =
+                            "color:var(--red);font-size:var(--fs-11);padding:12px";
                         errDiv.textContent = "error: " + e.message;
                         area.appendChild(errDiv);
                     } else {
