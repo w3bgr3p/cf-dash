@@ -32,6 +32,8 @@ Cloudflare dashboard — зоны, воркеры, Workers AI.
 **Создать автоматически:** на экране входа нажать  
 _"Don't have a token? Create one with Global API Key →"_  
 и ввести email + Global API Key.
+Global API можно получить по  [ссылке](https://dash.cloudflare.com/profile/api-tokens).   
+
 
 ### Сохранить токен (пропускать экран входа)
 
