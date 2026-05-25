@@ -1280,6 +1280,13 @@
                                     >—</span
                                 >
                                 <button
+                                    class="btn btn-sm btn-ghost"
+                                    onclick="clearChat()"
+                                    title="Clear chat history"
+                                >
+                                    ✕ clear chat
+                                </button>
+                                <button
                                     class="btn btn-sm"
                                     onclick="loadAiModels()"
                                 >
@@ -1392,6 +1399,7 @@
                                                 font-size: var(--fs-11);
                                             "
                                         />
+                                        <span style="font-size:var(--fs-9);color:var(--muted);margin-left:4px">ctrl+enter to send</span>
                                         <button
                                             class="btn btn-primary"
                                             id="ai-run-btn"
@@ -2332,6 +2340,48 @@
             // Хранит последний blob URL изображения для скачивания/копирования
             let _lastImgBlobUrl = null;
 
+            // История чата для LLM: [{role, content}]
+            let _chatHistory = [];
+
+            function _chatEmpty() {
+                const area = document.getElementById("ai-result-area");
+                area.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">run a prompt to see results here</div>';
+            }
+
+            function _renderChat() {
+                const area = document.getElementById("ai-result-area");
+                area.innerHTML = "";
+                if (_chatHistory.length === 0) { _chatEmpty(); return; }
+                for (const msg of _chatHistory) {
+                    const isUser = msg.role === "user";
+                    const wrap = document.createElement("div");
+                    wrap.style.cssText = `display:flex;flex-direction:column;gap:2px;align-items:${isUser ? "flex-end" : "flex-start"};margin-bottom:6px`;
+                    const lbl = document.createElement("div");
+                    lbl.style.cssText = "font-size:var(--fs-9);color:var(--text2);font-family:var(--font-mono);margin-bottom:2px";
+                    lbl.textContent = isUser ? "you" : "assistant";
+                    const bubble = document.createElement("div");
+                    bubble.style.cssText = `font-family:var(--font-mono);font-size:var(--fs-12);white-space:pre-wrap;line-height:1.6;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);max-width:90%;${
+                        isUser
+                            ? "background:color-mix(in srgb,var(--yellow) 8%,transparent);color:var(--text-hi);border-color:color-mix(in srgb,var(--yellow) 25%,transparent)"
+                            : "background:var(--bg);color:var(--text-hi)"
+                    }`;
+                    bubble.textContent = msg.content;
+                    wrap.append(lbl, bubble);
+                    area.appendChild(wrap);
+                }
+                area.scrollTop = area.scrollHeight;
+            }
+
+            function clearChat() {
+                _chatHistory = [];
+                _chatEmpty();
+            }
+
+            // Ctrl+Enter в поле промпта отправляет
+            document.getElementById("ai-prompt").addEventListener("keydown", function(e) {
+                if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); runAiModel(); }
+            });
+
             async function runAiModel() {
                 const modelId =
                     document.getElementById("ai-model-select").value;
@@ -2359,8 +2409,34 @@
                 btn.textContent = "…";
 
                 const area = document.getElementById("ai-result-area");
-                area.innerHTML =
-                    '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">running…</div>';
+
+                // Определяем категорию по локальному aiPricing
+                const pricingInfo = aiPricing[modelId];
+                const category = pricingInfo?.category || "LLM";
+                const isLLM = category === "LLM";
+
+                // Для LLM — добавляем user в историю, передаём полную историю
+                let messagesForRequest = null;
+                if (isLLM) {
+                    _chatHistory.push({ role: "user", content: prompt });
+                    _renderChat();
+                    // typing indicator
+                    const typing = document.createElement("div");
+                    typing.id = "chat-typing";
+                    typing.style.cssText = "color:var(--muted);font-size:var(--fs-11);padding:4px 12px;font-family:var(--font-mono)";
+                    typing.textContent = "thinking…";
+                    area.appendChild(typing);
+                    area.scrollTop = area.scrollHeight;
+                    // строим messages: system + history
+                    const full = system
+                        ? [{ role: "system", content: system }, ..._chatHistory]
+                        : [..._chatHistory];
+                    messagesForRequest = JSON.stringify(full);
+                } else {
+                    area.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-11);text-align:center;padding:20px">running…</div>';
+                }
+
+                document.getElementById("ai-prompt").value = "";
 
                 const params = new URLSearchParams({
                     model: modelId,
@@ -2369,6 +2445,7 @@
                 });
                 if (system) params.set("system", system);
                 if (currentToken) params.set("token", currentToken);
+                if (messagesForRequest) params.set("messages", messagesForRequest);
 
                 try {
                     const data = await fetch(`${API_BASE}/ai/run?${params}`, {
@@ -2389,7 +2466,6 @@
                             ? "var(--yellow)"
                             : "var(--green)";
 
-                    // ── cost block (общий) ──
                     const costWrap = document.createElement("div");
                     costWrap.innerHTML = `
         <div class="detail-section-label">cost breakdown</div>
@@ -2409,10 +2485,7 @@
           ${!isImage ? `· tokens in: ~${data.tokens?.input_estimated} · out: ~${data.tokens?.output_estimated}` : ""}
         </div>`;
 
-                    area.innerHTML = "";
-
                     if (isImage) {
-                        // Конвертируем base64 → Blob → Object URL (не вставляем в DOM напрямую)
                         const byteChars = atob(data.image_b64);
                         const byteArr = new Uint8Array(byteChars.length);
                         for (let i = 0; i < byteChars.length; i++)
@@ -2423,13 +2496,11 @@
                             URL.revokeObjectURL(_lastImgBlobUrl);
                         _lastImgBlobUrl = URL.createObjectURL(blob);
 
-                        // Заголовок
                         const label = document.createElement("div");
                         label.className = "detail-section-label";
                         label.style.marginBottom = "8px";
                         label.textContent = `generated image · ${fmtBytes(blob.size)}`;
 
-                        // Контейнер с картинкой
                         const imgWrap = document.createElement("div");
                         imgWrap.style.cssText =
                             "background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:120px";
@@ -2439,10 +2510,9 @@
                         img.alt = "generated";
                         img.style.cssText =
                             "max-width:100%;max-height:560px;display:block";
-                        img.src = _lastImgBlobUrl; // ← Object URL, не base64
+                        img.src = _lastImgBlobUrl;
                         imgWrap.appendChild(img);
 
-                        // Кнопки
                         const actions = document.createElement("div");
                         actions.style.cssText =
                             "display:flex;gap:8px;margin-top:8px;align-items:center";
@@ -2468,19 +2538,38 @@
                         const imgBlock = document.createElement("div");
                         imgBlock.append(label, imgWrap, actions);
 
+                        area.innerHTML = "";
                         area.append(imgBlock, costWrap);
+                    } else if (isLLM) {
+                        // Добавляем assistant в историю и ре-рендерим чат
+                        document.getElementById("chat-typing")?.remove();
+                        _chatHistory.push({ role: "assistant", content: data.response || "" });
+                        _renderChat();
+                        area.appendChild(costWrap);
                     } else {
-                        // LLM response
+                        // Embeddings и прочее
                         const respBlock = document.createElement("div");
                         respBlock.innerHTML = `
           <div class="detail-section-label">response</div>
           <div style="font-family:var(--font-mono);font-size:var(--fs-12);color:var(--text-hi);
             background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
-            padding:10px 12px;white-space:pre-wrap;line-height:1.6">${escHtml(data.response || "")}</div>`;
+            padding:10px 12px;white-space:pre-wrap;line-height:1.6">${escHtml(data.response || JSON.stringify(data.embeddings) || "")}</div>`;
+                        area.innerHTML = "";
                         area.append(respBlock, costWrap);
                     }
                 } catch (e) {
-                    area.innerHTML = `<div style="color:var(--red);font-size:var(--fs-11);padding:12px">error: ${escHtml(e.message)}</div>`;
+                    document.getElementById("chat-typing")?.remove();
+                    if (isLLM) {
+                        // убираем последнее user сообщение из истории при ошибке
+                        _chatHistory.pop();
+                        _renderChat();
+                        const errDiv = document.createElement("div");
+                        errDiv.style.cssText = "color:var(--red);font-size:var(--fs-11);padding:12px";
+                        errDiv.textContent = "error: " + e.message;
+                        area.appendChild(errDiv);
+                    } else {
+                        area.innerHTML = `<div style="color:var(--red);font-size:var(--fs-11);padding:12px">error: ${escHtml(e.message)}</div>`;
+                    }
                 } finally {
                     btn.disabled = false;
                     btn.textContent = "▶ run";
