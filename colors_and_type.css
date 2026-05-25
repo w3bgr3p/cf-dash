@@ -1,0 +1,198 @@
+/* =========================================================
+   ZP Design System — colors_and_type.css
+   GitHub-inspired developer-tool aesthetic.
+   Three themes: dark (default), light, hyper (matrix).
+   ========================================================= */
+
+:root,
+[data-theme="dark"] {
+  /* ---- Base surfaces ---- */
+  --bg:      #0d1117;   /* page                   */
+  --bg1:     #161b22;   /* panel / card           */
+  --bg2:     #21262d;   /* control / chip         */
+  --bg3:     #1f2937;   /* hovered control        */
+  --border:  #30363d;
+  --muted:   #484f58;
+
+  /* ---- Foreground ---- */
+  --text2:   #8b949e;   /* secondary              */
+  --text:    #c9d1d9;   /* body                   */
+  --text-hi: #e6edf3;   /* heading / emphasis     */
+
+  /* ---- Brand / semantic ---- */
+  --accent:  #58a6ff;   /* links, focus, primary  */
+  --green:   #3fb950;   /* success / start node   */
+  --red:     #f85149;   /* error / bad end        */
+  --yellow:  #d29922;   /* warning / Logic        */
+  --purple:  #a371f7;   /* Profile branches       */
+
+  /* ---- Shape ---- */
+  --radius:  6px;
+  --radius-sm: 3px;
+  --radius-lg: 10px;
+
+  /* ---- Spacing (4-step) ---- */
+  --s-1: 2px;
+  --s-2: 4px;
+  --s-3: 6px;
+  --s-4: 8px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 24px;
+  --s-8: 32px;
+
+  /* ---- Elevation / inner shadow ---- */
+  --shadow-1: 0 1px 0 rgba(0,0,0,.25);
+  --shadow-2: 0 4px 12px rgba(0,0,0,.35);
+  --shadow-pop: 0 8px 24px rgba(0,0,0,.5);
+
+  /* ---- Type stack ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* ---- Type sizes ---- */
+  --fs-9:  9px;   /* id / chip text             */
+  --fs-10: 10px;  /* branch row                 */
+  --fs-11: 11px;  /* button label               */
+  --fs-12: 12px;  /* node title / form label    */
+  --fs-14: 14px;  /* body / app default         */
+  --fs-16: 16px;  /* node icon                  */
+  --fs-20: 20px;
+  --fs-28: 28px;  /* big number / status        */
+
+  /* ---- Easing & timing ---- */
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --dur-1: 80ms;
+  --dur-2: 160ms;
+  --dur-3: 280ms;
+}
+
+[data-theme="light"] {
+  --bg:      #ffffff;
+  --bg1:     #f6f8fa;
+  --bg2:     #eaeef2;
+  --bg3:     #dde1e6;
+  --border:  #d0d7de;
+  --muted:   #9ea8b3;
+  --text2:   #656d76;
+  --text:    #1f2328;
+  --text-hi: #0d1117;
+  --accent:  #0969da;
+  --green:   #1a7f37;
+  --red:     #cf222e;
+  --yellow:  #9a6700;
+  --purple:  #8250df;
+  --shadow-1: 0 1px 0 rgba(31,35,40,.04);
+  --shadow-2: 0 3px 12px rgba(31,35,40,.08);
+  --shadow-pop: 0 8px 24px rgba(31,35,40,.12);
+}
+
+[data-theme="hyper"] {
+  --bg:      #000000;
+  --bg1:     #0a0a0a;
+  --bg2:     #111111;
+  --bg3:     #1a1a1a;
+  --border:  #2a2a2a;
+  --muted:   #333333;
+  --text2:   #888888;
+  --text:    #cccccc;
+  --text-hi: #eeeeee;
+  --accent:  #00ff41;
+  --green:   #00ff41;
+  --red:     #ff3333;
+  --yellow:  #f5d800;
+  --purple:  #bd93f9;
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-lg: 0px;
+  --shadow-1: 0 0 0 transparent;
+  --shadow-2: 0 0 12px rgba(0,255,65,.15);
+  --shadow-pop: 0 0 24px rgba(0,255,65,.25);
+  --font-sans: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------------- Semantic element styles ----------------
+   Use these classnames anywhere; they map to the tokens above.
+*/
+
+.zp-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.45;
+}
+
+.zp-h1 { font-size: var(--fs-28); font-weight: 700; color: var(--text-hi); letter-spacing: -.01em; }
+.zp-h2 { font-size: var(--fs-20); font-weight: 700; color: var(--text-hi); }
+.zp-h3 { font-size: var(--fs-14); font-weight: 700; color: var(--text-hi); }
+.zp-label { font-size: var(--fs-11); font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .04em; }
+.zp-muted { font-size: var(--fs-12); color: var(--muted); }
+.zp-code  { font-family: var(--font-mono); font-size: var(--fs-12); color: var(--text); }
+.zp-id    { font-family: var(--font-mono); font-size: var(--fs-9); color: var(--muted); }
+
+/* ---------------- Atom classes ---------------- */
+
+.zp-btn {
+  font-family: inherit;
+  font-size: var(--fs-11);
+  padding: 4px 12px;
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+.zp-btn:hover  { background: var(--bg3); }
+.zp-btn:active { background: var(--bg1); transform: translateY(1px); }
+.zp-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.zp-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.zp-btn-primary:hover  { filter: brightness(1.08); background: var(--accent); }
+
+.zp-btn-danger { background: var(--red); color: #fff; border-color: transparent; }
+.zp-btn-ghost  { background: transparent; border-color: transparent; color: var(--text2); }
+.zp-btn-ghost:hover { color: var(--text-hi); background: var(--bg2); }
+
+.zp-input {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--text-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+  width: 100%;
+}
+.zp-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+.zp-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.zp-chip {
+  font-size: var(--fs-9);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg2);
+  color: var(--text2);
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+.zp-chip-accent { color: var(--accent); }
+.zp-chip-green  { color: var(--green);  }
+.zp-chip-yellow { color: var(--yellow); }
+.zp-chip-purple { color: var(--purple); }
+.zp-chip-red    { color: var(--red);    }
+
+.zp-divider-v { width: 1px; height: 16px; background: var(--border); }
+.zp-divider-h { height: 1px; width: 100%; background: var(--border); }
